@@ -19,6 +19,10 @@ use Shopify\Utils;
 use Shopify\Webhooks\Registry;
 use Shopify\Webhooks\Topics;
 
+// use Illuminate\Http\Request;
+// use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Http;
+
 /*
 |--------------------------------------------------------------------------
 | Web Routes
@@ -31,15 +35,33 @@ use Shopify\Webhooks\Topics;
 */
 
 Route::fallback(function (Request $request) {
-    if (Context::$IS_EMBEDDED_APP &&  $request->query("embedded", false) === "1") {
-        if (env('APP_ENV') === 'production') {
-            return file_get_contents(public_path('index.html'));
-        } else {
-            return file_get_contents(base_path('frontend/index.html'));
-        }
-    } else {
-        return redirect(Utils::getEmbeddedAppUrl($request->query("host", null)) . "/" . $request->path());
-    }
+
+    $shop_domain = $request->get('shop');
+    $session = Session::where('shop', $shop)->get('access_token')->first();
+    $access_token = data_get($session, 'access_token','');
+    $client = new Rest(
+        $shop,
+        $access_token // shpat_***
+    );
+    $res = $client->get('shop')->getDecodedBody();
+    // dd($client->get('shop')->getDecodedBody(),$shop,$access_token);
+    // return redirect(Utils::getEmbeddedAppUrl($request->query("host", null)) . "/" . $request->path());
+
+    $response = Http::post(env('APP_URL') . '/api/user', [
+        'shop' => $res['shop'],
+        'access_token' => $access_token,
+    ]);
+
+    return $response;
+    // if (Context::$IS_EMBEDDED_APP &&  $request->query("embedded", false) === "1") {
+    //     if (env('APP_ENV') === 'production') {
+    //         return file_get_contents(public_path('index.html'));
+    //     } else {
+
+    //         // return file_get_contents(base_path('frontend/index.html'));
+    //     }
+    // } else {
+    // }
 })->middleware('shopify.installed');
 
 Route::get('/api/auth', function (Request $request) {
