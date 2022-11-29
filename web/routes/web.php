@@ -22,6 +22,7 @@ use Shopify\Webhooks\Topics;
 // use Illuminate\Http\Request;
 // use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Http;
+use Shopify\Rest\Admin2022_10\ScriptTag;
 
 /*
 |--------------------------------------------------------------------------
@@ -37,32 +38,74 @@ use Illuminate\Support\Facades\Http;
 Route::fallback(function (Request $request) {
 
     $shop_domain = $request->get('shop');
-    $session = Session::where('shop', $shop)->get('access_token')->first();
-    $access_token = data_get($session, 'access_token','');
+    $session = Session::where('shop', $shop_domain)->get(['access_token','active_id'])->first();
+    $access_token = data_get($session, 'access_token', '');
+    $active_user_id = data_get($session, 'active_id', '');
     $client = new Rest(
-        $shop,
+        $shop_domain,
         $access_token // shpat_***
     );
     $res = $client->get('shop')->getDecodedBody();
-    // dd($client->get('shop')->getDecodedBody(),$shop,$access_token);
-    // return redirect(Utils::getEmbeddedAppUrl($request->query("host", null)) . "/" . $request->path());
 
-    $response = Http::post(env('APP_URL') . '/api/user', [
-        'shop' => $res['shop'],
-        'access_token' => $access_token,
-    ]);
+    if(!empty(data_get($res,'shop',null))) $shop = data_get($res,'shop',null);
 
-    return $response;
-    // if (Context::$IS_EMBEDDED_APP &&  $request->query("embedded", false) === "1") {
-    //     if (env('APP_ENV') === 'production') {
-    //         return file_get_contents(public_path('index.html'));
-    //     } else {
+    $url = env(   "API_URL") . '/v1/auth/token/entry';
 
-    //         // return file_get_contents(base_path('frontend/index.html'));
-    //     }
-    // } else {
-    // }
+    $data = [
+        "partner" => "shopify.com",
+        "email" => data_get($shop,"email",null),
+        "phone" => data_get($shop,"phone",null),
+        "displayName" => data_get($shop,"shop_owner",null),
+        "photoURL" => "",
+        "language" => data_get($shop,"country",null),
+        "uid" => $active_user_id,
+        "customClaims" => [
+            "info" => $shop
+        ],
+        "access_token" => $access_token
+    ];
+
+    $response = Http::withHeaders([
+        'X-First' => 'foo',
+        'X-Second' => 'bar'
+    ])->post($url,$data);
+
+    if($response->status() == 200) {
+        $data = data_get($response,"data", []);
+        $user_ui = data_get($data,"uid","");
+        $token = data_get($data,"idToken","");
+        $refreshToken = data_get($data,"refreshToken","");
+        $expiresIn = data_get($data,"expiresIn","");
+        $redirectUrl = data_get($data,"redirectUrl","") . '?idToken=' . $token . '&expiresIn=' . $expiresIn . '&refreshToken=' . $refreshToken;
+        // dd($response->json());
+        Session::where('access_token', $access_token)->update(['active_id' => $user_ui]);
+
+        return redirect()->away($redirectUrl);
+    }else{
+        $request->headers->set('X-Shopify-Access-Token' , $access_token);
+        $request->headers->set('Content-Type' , 'application/json');
+//dd($shop_domain . '/admin/api/2022-10/script_tags.json');
+//        $test_session = Utils::loadCurrentSession(
+//            $request->header(),
+//            $request->cookie(),
+//            false
+//        );
+//        dd($test_session);
+//        dd($client->get('shop'));
+//        $shop_domain = 'dev-nghaihoang.myshopify.com';
+//        $session = Session::where('shop', $shop_domain)->get(['access_token','active_id'])->first();
+//dd($session);
+//        $script_tag = new ScriptTag(
+//            $shop_domain,
+//            $access_token
+//        );
+//        dd($script_tag);
+//        dd($script_tag);
+//        dd($response->json());
+    }
+
 })->middleware('shopify.installed');
+
 
 Route::get('/api/auth', function (Request $request) {
     $shop = Utils::sanitizeShopDomain($request->query('shop'));
@@ -106,14 +149,34 @@ Route::get('/api/auth/callback', function (Request $request) {
 });
 
 Route::get('/api/products/count', function (Request $request) {
-    /** @var AuthSession */
-    $session = $request->get('shopifySession'); // Provided by the shopify.auth middleware, guaranteed to be active
+//    dd($request->header());
+    $shop_domain = 'dev-nghaihoang.myshopify.com';
+    $session = Session::where('shop', $shop_domain)->get(['access_token','active_id'])->first();
 
-    $client = new Rest($session->getShop(), $session->getAccessToken());
-    $result = $client->get('products/count');
+    $script_tag = new ScriptTag($session);
+//    dd($script_tag);
+});
 
-    return response($result->getDecodedBody());
-})->middleware('shopify.auth');
+Route::post('/update/script/tag',function (Request $request) {
+    $shop_domain = $request->post('shop_domain');
+    $script_url = $request->post('script_url');
+    $session = Session::where('shop', $shop_domain)->get(['access_token','active_id'])->first();
+    $access_token = data_get($session, 'access_token', '');
+    $active_user_id = data_get($session, 'active_id', '');
+
+    $data = [
+        "script_tag" => [
+            "event" => "onload",
+            "src" => "https://example.com/my_script2.js"
+        ]
+    ];
+    $response = Http::withHeaders([
+        'X-Shopify-Access-Token' => $access_token,
+        'Content-Type' => 'application/json'
+    ])->post('https://' . $shop_domain . '/admin/api/2022-10/script_tags.json',$data);
+//        dd($shop_domain . '/admin/api/2022-10/script_tags.json',json_encode($data));
+    dd(json_decode($response->body()));
+});
 
 Route::get('/api/products/create', function (Request $request) {
     /** @var AuthSession */
